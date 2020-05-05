@@ -30,6 +30,7 @@ def my_slow_func(n):
  x  = my_slow_func(5) # this is blazing fast!
  ... a long time passes ...
  x  = my_slow_func(5) # slow again- gotta replace the old, stale value
+ x  = my_slow_func(5) # fast again!
  ~~~~
  
 ## recalc_key
