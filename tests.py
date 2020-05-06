@@ -10,7 +10,7 @@ def dummy_slow_square(*args, **kwargs):
     return args[0]**2
 
 def test_redis_int():
-    redis_cache.delete("dummy_slow_square_3")
+    redis_ephemeral.delete("dummy_slow_square-3@Primary")
     t0 = time.time()
     val1 = dummy_slow_square(3) # could be slow
     t1 = time.time()
@@ -36,7 +36,7 @@ def dummy_slow_json(*args, **kwargs):
     return {'foo':'bar'}
 
 def test_redis_json():
-    redis_cache.delete("dummy_slow_json_color-blue_hot-False")
+    redis_ephemeral.delete("dummy_slow_json_color-blue_hot-False@Primary")
     t0 = time.time()
     val1 = dummy_slow_json(**{'color':'blue','hot':False})
     t1 = time.time()

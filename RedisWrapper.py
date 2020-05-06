@@ -12,7 +12,7 @@ def set_recalc_key(recalc_key, persisted_inst=False):
         redis_inst = redis_persisted
     else:
         redis_inst = redis_ephemeral
-    invalid_before = int(time.time()) # entries before this timestamp will be considered invalid
+    invalid_before = float(time.time()) # entries before this timestamp will be considered invalid
     redis_inst.set('rc_key@{}'.format(recalc_key), invalid_before )
 
 
@@ -82,13 +82,15 @@ def redis_wrapper(max_age=None, recalc_key=None, persisted_inst=False, verbose=F
                             # the stored value is too old
                             recalc = True
                 if recalc_key != None:
+
                     # The user specified this function should check for a trigger indicating the old value is invalid
                     invalid_before = redis_inst.get('rc_key@{}'.format(recalc_key)) # a timestamp invalidating previous entries
                     val_SetTime = redis_inst.get(key_SetTime) # the timestamp of the last entry
+                    print('**I HAS RECALC inv_before={}, val_SetTime={}'.format(invalid_before, val_SetTime))
                     if (invalid_before != None) and (val_SetTime != None):
                         # A invalid_before tirgger is stored and a previous item was cahced
-                        invalid_before = int(invalid_before)
-                        val_SetTime = int(val_SetTime)
+                        invalid_before = float(invalid_before)
+                        val_SetTime = float(val_SetTime)
                         if invalid_before > val_SetTime:
                             # The trigger is set to true: a recalc is needed
                             recalc = True
@@ -101,7 +103,7 @@ def redis_wrapper(max_age=None, recalc_key=None, persisted_inst=False, verbose=F
                 val_Primary = func(*args, **kwargs) # <<<--- HERE IS WHERE YOU CALL THE FUNCTION YOU WRAPPED IN @redis_wrapper
                 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
                 val_DatType = type(val_Primary).__name__
-                val_SetTime = int(time.time()) # timestamp in seconds
+                val_SetTime = float(time.time()) # timestamp in seconds
                 # update Redis with the new value
                 if val_DatType in ('set', 'tuple'):
                     redis_inst.set(key_Primary, json.dumps(list(val_Primary)))
