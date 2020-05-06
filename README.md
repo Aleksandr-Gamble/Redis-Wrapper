@@ -53,10 +53,30 @@ def my_slow_func(n):
 
  ~~~~
 
-## Installing Redis
+## Setting up Redis on Docker
 
-If you are on Linux and don't have Redis installed, you could run something like
-~~~~
-$ docker pull redis:6.0.1
-$ docker run -d -p6379:6379 --name MyRedis redis:6.0.1
-~~~~
+This application assumes you have two Redis instances running- one with AOF append-only persistence and one with ephemeral memory only. 
+Here is how you can accomplish this with Docker:
+
+# pull the image
+sudo docker pull redis:6.01
+
+
+Ephemeral Redis
+# nothing gets persisted
+sudo lsof -i :6379  # ensure the port is open
+sudo docker run \
+     -d -p6379:6379 \
+     --name Redis.Ephemeral redis:6.0.1
+
+
+Persisted Redis
+# every write is recorded immutably and replayed on restart
+sudo lsof -i :7379  # ensure the port is open
+# Folder permissions are funky here: this seems to work:
+sudo chmod a+rwx dvAOF           # everybody can write
+sudo chown -R root:root dvAOF    # docker runs as root
+sudo docker run \
+     -d -p7379:6379 \
+     -v $HOME/Redis-Wrapper/dvAOF:/data \
+     --name Redis.Persisted redis:6.0.1 --appendonly yes

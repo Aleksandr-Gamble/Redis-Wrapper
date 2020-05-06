@@ -1,13 +1,19 @@
 
 import redis, json, time
 
-redis_cache = redis.Redis()
+redis_ephemeral = redis.Redis(port=6379)
+redis_persisted = redis.Redis(port=7379)
 
 
 
-def set_recalc_key(recalc_key):
+def set_recalc_key(recalc_key, persisted_inst=False):
     # Set the "trigger" recalc_key in Redis so any methods that rely on it are forced to recalculate
-    redis_cache.set('rc_key@{}'.format(recalc_key), 1)
+    if persisted_inst:
+        redis_inst = redis_persisted
+    else:
+        redis_inst = redis_ephemeral
+    invalid_before = int(time.time()) # entries before this timestamp will be considered invalid
+    redis_inst.set('rc_key@{}'.format(recalc_key), invalid_before )
 
 
 
@@ -36,33 +42,39 @@ def object_to_sort_string(x):
 
 
 
-def redis_wrapper(max_age=None, recalc_key=None, verbose=False):
+def redis_wrapper(max_age=None, recalc_key=None, persisted_inst=False, verbose=False):
     # This wrapper is applied when you are defining a function you want to speed up with Redis
     # if the same function has been called with the same args and kwargs before, the calculation will be skipped and a cached version from Redis returned
     # if a combination of (function, args, kwargs) is new, the function will be called and the value stored in Redis for the next time
     # NOTE value will be re-calculated and Redis update if either of these conditions are True:
     #    max_age: it has been < max_age since the value was last updated (to avoid stale data)
     #    recalc_key: an event has triggerd a "recalculation key" indicating the old value is no longer valid
+    if persisted_inst:
+        redis_inst = redis_persisted
+    else:
+        redis_inst = redis_ephemeral
     def cache_decorator(func):
         def wrapper(*args, **kwargs):
 
             # Generate a key based on the (function, args, kwargs)
-            key = func.__name__ + '-' + '_'.join([ object_to_sort_string(x) for x in ( list(args) + sorted(list(kwargs.items())) ) ] )
-            key_type = '{}@type@'.format(key)
-            key_updated = '{}@updated@'.format(key)
+            key_base = func.__name__ + '-' + '_'.join([ object_to_sort_string(x) for x in ( list(args) + sorted(list(kwargs.items())) ) ] )
+            key_Primary = '{}@Primary'.format(key_base)     # this key stores the object you are caching
+            key_DatType = '{}@DatType'.format(key_base)     # this key notes its type
+            key_SetTime = '{}@SetTime'.format(key_base)     # this key notes when it was updated 
+            key_GetCount = '{}@GetCount'.format(key_base)   # this key counts how many times it has been read
 
 
             # determine if a recalculation is needed
             recalc = False # assume it is not to start
-            val = redis_cache.get(key) # try to get the key
-            if val == None:
+            val_Primary = redis_inst.get(key_Primary) # try to get the key
+            if val_Primary == None:
                 # no value was found for this key in Redis- a recalc is needed
                 recalc = True
             else:
                 # A value was found in Redis, but is it current?
                 if max_age != None:
                     # The user has specified a maximum age beofre stored values are "stale"
-                    last_updated = redis_cache.get(key_updated)
+                    last_updated = redis_inst.get(key_SetTime)
                     if last_updated != None:
                         # the value has been stored previously in Redis
                         last_updated = float(last_updated.decode('utf-8'))
@@ -71,11 +83,13 @@ def redis_wrapper(max_age=None, recalc_key=None, verbose=False):
                             recalc = True
                 if recalc_key != None:
                     # The user specified this function should check for a trigger indicating the old value is invalid
-                    trigger_status = redis_cache.get('rc_key@{}'.format(recalc_key))
-                    if trigger_status != None:
-                        # A value has been stored for the trigger
-                        trigger_status = int(trigger_status.decode('utf-8'))
-                        if trigger_status == 1:
+                    invalid_before = redis_inst.get('rc_key@{}'.format(recalc_key)) # a timestamp invalidating previous entries
+                    val_SetTime = redis_inst.get(key_SetTime) # the timestamp of the last entry
+                    if (invalid_before != None) and (val_SetTime != None):
+                        # A invalid_before tirgger is stored and a previous item was cahced
+                        invalid_before = int(invalid_before)
+                        val_SetTime = int(val_SetTime)
+                        if invalid_before > val_SetTime:
                             # The trigger is set to true: a recalc is needed
                             recalc = True
 
@@ -83,51 +97,52 @@ def redis_wrapper(max_age=None, recalc_key=None, verbose=False):
             # perform the calculation if needed...
             if recalc:
                 # The value did not exist in the Redis cache. Call the function
-                val = func(*args, **kwargs)
-                val_type = type(val).__name__
-                val_updated = int(time.time()) # timestamp in seconds
+                # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                val_Primary = func(*args, **kwargs) # <<<--- HERE IS WHERE YOU CALL THE FUNCTION YOU WRAPPED IN @redis_wrapper
+                # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                val_DatType = type(val_Primary).__name__
+                val_SetTime = int(time.time()) # timestamp in seconds
                 # update Redis with the new value
-                if val_type in ('set', 'tuple'):
-                    redis_cache.set(key, json.dumps(list(val)))
-                elif val_type in ['dict','list']:
-                    redis_cache.set(key, json.dumps(val))
-                elif val_type == 'bool':
-                    redis_cache.set(key, str(val))
+                if val_DatType in ('set', 'tuple'):
+                    redis_inst.set(key_Primary, json.dumps(list(val_Primary)))
+                elif val_DatType in ['dict','list']:
+                    redis_inst.set(key_Primary, json.dumps(val_Primary))
+                elif val_DatType == 'bool':
+                    redis_inst.set(key_Primary, str(val_Primary))
                 else:
-                    redis_cache.set(key, val)
-                redis_cache.set(key_type, val_type) # record the type of value
-                redis_cache.set(key_updated, val_updated) # record when it was updated
-                if recalc_key != None:
-                    # indicate the value has been updated- no more recalculation needed
-                    redis_cache.set('rc_key@{}'.format(recalc_key), 0)
+                    redis_inst.set(key_Primary, val_Primary)
+                redis_inst.set(key_DatType, val_DatType) # record the type of value
+                redis_inst.set(key_SetTime, val_SetTime) # record when it was updated
+                redis_inst.set(key_GetCount, 0)          # this new value has not been read yet
                 if verbose:
-                    print('Redis SET {} = {}'.format(key, val))
+                    print('Redis SET {}'.format(key_Primary))
                 
 
             # ... or format the value stored in Redis
             else:
                 # The value did exist in the Redis cache
-                val_type = redis_cache.get(key_type).decode('utf-8')
-                if val_type == 'set':
-                    val = set(json.loads(val.decode('utf-8')))
-                elif val_type == 'tuple':
-                    val =  tuple(json.loads(val.decode('utf-8')))
-                elif val_type in ['list', 'dict']:
-                    val =  json.loads(val.decode('utf-8'))
-                elif val_type == 'str':
-                    val =  val.decode('utf-8')
-                elif val_type == 'float':
-                    val =  float(val)
-                elif val_type == 'int':
-                    val =  int(val)
-                elif val_type == 'bool':
-                    val = ('true' in val.decode('utf-8').lower())
+                val_DatType = redis_inst.get(key_DatType).decode('utf-8')
+                if val_DatType == 'set':
+                    val_Primary = set(json.loads(val_Primary.decode('utf-8')))
+                elif val_DatType == 'tuple':
+                    val_Primary =  tuple(json.loads(val_Primary.decode('utf-8')))
+                elif val_DatType in ['list', 'dict']:
+                    val_Primary =  json.loads(val_Primary.decode('utf-8'))
+                elif val_DatType == 'str':
+                    val_Primary =  val_Primary.decode('utf-8')
+                elif val_DatType == 'float':
+                    val_Primary =  float(val_Primary)
+                elif val_DatType == 'int':
+                    val_Primary =  int(val_Primary)
+                elif val_DatType == 'bool':
+                    val_Primary = ('true' in val_Primary.decode('utf-8').lower())
                 else:
-                    val = val
+                    val_Primary = val_Primary
+                redis_inst.incr(key_GetCount)
                 if verbose:
-                    print('Redis GET {} = {}'.format(key, val))
+                    print('Redis GET {}'.format(key_Primary))
 
-            return val      # the function you create returns a value...
+            return val_Primary      # the function you create returns a value...
         return wrapper      # the wrapper alters that function...
     return cache_decorator  # redis_wrapper returns a decorator that creates that wrapper
 
