@@ -2,8 +2,8 @@
 import redis, json, time
 from os import environ
 
-redis_ephemeral = redis.Redis(port=16399, password=environ['ephemeral_pw'])
-redis_persisted = redis.Redis(port=7379)
+redis_ephemeral = redis.Redis(port=ObscurePort, password=environ['_pw'])
+redis_persisted = redis.Redis(port=PersistedObscurePort, password="otherPw")
 
 
 

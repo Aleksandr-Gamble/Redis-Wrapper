@@ -54,3 +54,10 @@ def my_slow_func(n):
  ~~~~
 
 
+## Securing Redis
+sudo nano /etc/redis/redis.conf
+supervised systemd
+port ObscurePortNumber
+requirepass "yourSuperSecretPW"
+bind 127.0.0.1 ::1
+
